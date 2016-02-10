@@ -1,6 +1,5 @@
 defmodule Mail do
-  defstruct body: %{},
-            headers: %{}
+  defstruct headers: %{}, parts: []
 
   @moduledoc """
   Mail primitive for composing messages.
@@ -20,30 +19,49 @@ defmodule Mail do
   """
 
   @doc """
-  Add content to the body by mimetype as a key/value pair
+  Add new part
 
-  Allows content to be updated in the `body` field
-  by the mimetype extension
-
-      Mail.put_put(%Mail{}, :text, "text content")
+      Mail.put_part(%Mail{}, %Mail.Part{})
   """
-  def put_body(mail, part, content),
-    do: put_in(mail.body[part], content)
+  def put_part(mail, %Mail.Part{}=part),
+    do: put_in(mail.parts, [part | mail.parts])
 
   @doc """
-  Add text content to the body
+  Delete a matching part
 
-  Shortcut function for adding plain text to the body
+  Will delete a matching part in the `parts` list. If the part
+  is not found no error is raised.
+  """
+  def delete_part(mail, part),
+    do: put_in(mail.parts, List.delete(mail.parts, part))
+
+  @doc """
+  Add a plaintext part
+
+  Shortcut function for adding plain text part
 
       Mail.put_text(%Mail{}, "Some plain text")
 
-  This function is equivilant to using the `put_body/3`
+  This function is equivilant to using the `put_part/2`
   function
 
-      Mail.put_body(%Mail{}, :text, "Some plain text")
+      Mail.put_body(%Mail{}, %Mail.Part{data: "Some plain text", headers: %{content_type: "text/plain"}})
+
+  If a text part already exists this function will replace that existing
+  part with the new part.
   """
-  def put_text(mail, content),
-    do: put_body(mail, :text, content)
+  def put_text(mail, content) do
+    mail = case Enum.find(mail.parts, &(&1.headers.content_type == "text/plain")) do
+      %Mail.Part{} = part -> Mail.delete_part(mail, part)
+      _ -> mail
+    end
+
+    new_part =
+      Mail.Part.put_data(%Mail.Part{}, content)
+      |> Mail.Part.put_content_type("text/plain")
+
+    put_part(mail, new_part)
+  end
 
   @doc """
   Add html content to the body
@@ -57,8 +75,18 @@ defmodule Mail do
 
       Mail.put_body(%Mail{}, :html, "<span>Some HTML</span>")
   """
-  def put_html(mail, content),
-    do: put_body(mail, :html, content)
+  def put_html(mail, content) do
+    mail = case Enum.find(mail.parts, &(&1.headers.content_type == "text/html")) do
+      %Mail.Part{} = part -> Mail.delete_part(mail, part)
+      _ -> mail
+    end
+
+    new_part =
+      Mail.Part.put_data(%Mail.Part{}, content)
+      |> Mail.Part.put_content_type("text/html")
+
+    put_part(mail, new_part)
+  end
 
   @doc """
   Add a new header key/value pair
@@ -244,7 +272,7 @@ defmodule Mail do
   defp validate_recipients([]), do: nil
   defp validate_recipients([recipient|tail]) do
     case recipient do
-      {name, email} -> validate_recipients(tail)
+      {name, email} when is_binary(name) and is_binary(email) -> validate_recipients(tail)
       email when is_binary(email) -> validate_recipients(tail)
       other -> raise ArgumentError,
         message: """
